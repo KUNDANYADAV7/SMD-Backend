@@ -106,3 +106,29 @@ export const getTrustedClientById = async (req, res) => {
     res.status(500).json({ message: "Server error", details: error.message });
   }
 };
+
+
+export const getTrustedClientCategoryCounts = async (req, res) => {
+  try {
+    const counts = await TrustedClient.aggregate([
+      {
+        $group: {
+          _id: "$category",
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          category: "$_id",
+          count: 1,
+          _id: 0
+        }
+      }
+    ]);
+
+    res.status(200).json(counts);
+  } catch (error) {
+    console.error("Error getting trusted client category counts:", error);
+    res.status(500).json({ message: "Failed to get category counts", details: error.message });
+  }
+};

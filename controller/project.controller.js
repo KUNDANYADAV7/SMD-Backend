@@ -211,3 +211,31 @@ export const getProjectBySlug = async (req, res) => {
     res.status(500).json({ message: "Failed to fetch project", details: error.message });
   }
 };
+
+
+
+
+export const getCategoryCounts = async (req, res) => {
+  try {
+    const counts = await Project.aggregate([
+      {
+        $group: {
+          _id: "$category",
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          category: "$_id",
+          count: 1,
+          _id: 0
+        }
+      }
+    ]);
+
+    res.status(200).json(counts);
+  } catch (error) {
+    console.error("Error getting category counts:", error);
+    res.status(500).json({ message: "Failed to get category counts", details: error.message });
+  }
+};

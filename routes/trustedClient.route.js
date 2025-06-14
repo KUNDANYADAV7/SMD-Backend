@@ -4,7 +4,8 @@ import {
   getAllTrustedClients,
   updateTrustedClient,
   deleteTrustedClient,
-  getTrustedClientById
+  getTrustedClientById,
+  getTrustedClientCategoryCounts 
 } from "../controller/trustedClient.controller.js";
 import { isAuthenticated, isAdmin } from "../middleware/authUser.js";
 import { upload, setUploadFolder } from "../middleware/Multer.js";
@@ -21,6 +22,8 @@ router.post(
 );
 
 router.get("/all", getAllTrustedClients);
+
+router.get("/category-counts", getTrustedClientCategoryCounts);
 
 router.get("/:id", getTrustedClientById);
 
@@ -39,5 +42,6 @@ router.delete(
   isAdmin("admin"),
   deleteTrustedClient
 );
+
 
 export default router;

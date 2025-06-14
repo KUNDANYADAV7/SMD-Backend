@@ -6,6 +6,7 @@ import {
   getAllProjects,
   getProjectById,
   getProjectBySlug,
+  getCategoryCounts
 } from "../controller/project.controller.js";
 import { isAuthenticated, isAdmin } from "../middleware/authUser.js";
 import { upload, setUploadFolder } from "../middleware/Multer.js";
@@ -41,5 +42,6 @@ router.delete("/delete/:id", isAuthenticated, isAdmin("admin"), deleteProject);
 router.get("/all", getAllProjects);
 router.get("/id/:id", getProjectById);
 router.get("/slug/:slug", getProjectBySlug);
+router.get("/category-counts", getCategoryCounts);
 
 export default router;
