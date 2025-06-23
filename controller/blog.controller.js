@@ -3,8 +3,8 @@ import { Blog } from "../models/blog.model.js";
 import slugify from "slugify";
 import fs from "fs";
 import path from "path";
-import { io } from "../index.js"; 
-
+import { io } from "../index.js";
+import { cache } from "../middleware/cache.js";
 
 export const createBlog = async (req, res) => {
   try {
@@ -43,7 +43,11 @@ export const createBlog = async (req, res) => {
       photo: imagePath,
     });
 
-    io.emit("blogCreated", blog); 
+    io.emit("blogCreated", blog);
+
+    // ✅ Clear related cache
+    cache.del("allBlogs");
+    cache.del(`myBlogs:${createdBy}`);
 
     res.status(201).json({ message: "Blog created successfully", blog });
   } catch (error) {
@@ -69,7 +73,12 @@ export const deleteBlog = async (req, res) => {
 
     await blog.deleteOne();
 
-    io.emit("blogDeleted", { id }); 
+    io.emit("blogDeleted", { id });
+
+    // ✅ Clear related cache
+    cache.del("allBlogs");
+    cache.del(`blog:${blog.slug}`);
+    cache.del(`myBlogs:${blog.createdBy}`);
 
     res.status(200).json({ message: "Blog deleted successfully" });
   } catch (error) {
@@ -115,7 +124,12 @@ export const updateBlog = async (req, res) => {
 
     const updatedBlog = await Blog.findByIdAndUpdate(id, updateData, { new: true });
 
-    io.emit("blogUpdated", updatedBlog); 
+    io.emit("blogUpdated", updatedBlog);
+
+    // ✅ Clear related cache
+    cache.del("allBlogs");
+    cache.del(`blog:${blog.slug}`);
+    cache.del(`myBlogs:${blog.createdBy}`);
 
     res.status(200).json({ message: "Blog updated successfully", updatedBlog });
   } catch (error) {
@@ -124,19 +138,34 @@ export const updateBlog = async (req, res) => {
 };
 
 export const getAllBlogs = async (req, res) => {
-  const allBlogs = await Blog.find();
-  res.status(200).json(allBlogs);
+  try {
+    const cached = cache.get("allBlogs");
+    if (cached) {
+      return res.status(200).json(cached);
+    }
+
+    const allBlogs = await Blog.find();
+    cache.set("allBlogs", allBlogs);
+    res.status(200).json(allBlogs);
+  } catch (error) {
+    res.status(500).json({ message: "Internal Server Error", details: error.message });
+  }
 };
 
 export const getSingleBlogs = async (req, res) => {
   try {
     const { slug } = req.params;
-    const blog = await Blog.findOne({ slug });
+    const cached = cache.get(`blog:${slug}`);
+    if (cached) {
+      return res.status(200).json(cached);
+    }
 
+    const blog = await Blog.findOne({ slug });
     if (!blog) {
       return res.status(404).json({ message: "Blog not found" });
     }
 
+    cache.set(`blog:${slug}`, blog);
     res.status(200).json(blog);
   } catch (error) {
     res.status(500).json({ error: "Internal Server Error", details: error.message });
@@ -144,7 +173,17 @@ export const getSingleBlogs = async (req, res) => {
 };
 
 export const getMyBlogs = async (req, res) => {
-  const createdBy = req.user._id;
-  const myBlogs = await Blog.find({ createdBy });
-  res.status(200).json(myBlogs);
+  try {
+    const createdBy = req.user._id;
+    const cached = cache.get(`myBlogs:${createdBy}`);
+    if (cached) {
+      return res.status(200).json(cached);
+    }
+
+    const myBlogs = await Blog.find({ createdBy });
+    cache.set(`myBlogs:${createdBy}`, myBlogs);
+    res.status(200).json(myBlogs);
+  } catch (error) {
+    res.status(500).json({ message: "Internal Server Error", details: error.message });
+  }
 };

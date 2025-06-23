@@ -16,15 +16,22 @@ const serviceSchema = new mongoose.Schema(
       required: true,
     },
     iconName: {
-      type: String, // Optional field for storing icon name
+      type: String,
     },
     iconImage: {
-      type: String, // Optional
+      type: String,
     },
     serviceImage: {
       type: String,
       required: true,
     },
+    steps: [
+      {
+        stepTitle: { type: String },
+        stepDescription: { type: String },
+        stepImage: { type: String },
+      },
+    ],
     createdBy: {
       type: mongoose.Schema.ObjectId,
       ref: "User",
@@ -32,5 +39,6 @@ const serviceSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
 
 export const Service = mongoose.model("Service", serviceSchema);

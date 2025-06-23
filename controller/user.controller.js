@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken"
 import nodemailer from "nodemailer"
 import fs from "fs";
 import path from "path";
+import { cache } from "../middleware/cache.js";
 
 
 export const register = async (req, res) => {
@@ -103,10 +104,6 @@ export const logout = (req, res) => {
   }
 };
 
-export const getMyProfile = async (req, res) => {
-  const user = await req.user;
-  res.status(200).json({ user });
-};
 
 export const getAdmins = async (req, res) => { 
   const admins = await User.find({ role: "admin" });
@@ -132,9 +129,7 @@ export const updateProfilePhoto = async (req, res) => {
       !currentPassword &&
       !newPassword
     ) {
-      return res
-        .status(400)
-        .json({ message: "No data provided for update" });
+      return res.status(400).json({ message: "No data provided for update" });
     }
 
     // Fetch user with password for verification
@@ -145,22 +140,17 @@ export const updateProfilePhoto = async (req, res) => {
 
     const updateData = {};
 
-    // Update firstName and lastName
     if (firstName) updateData.firstName = firstName;
     if (lastName) updateData.lastName = lastName;
 
-    // Update phone if it's not taken by another user
     if (phone) {
       const existingUser = await User.findOne({ phone });
       if (existingUser && existingUser._id.toString() !== id) {
-        return res
-          .status(400)
-          .json({ message: "Phone number already exists" });
+        return res.status(400).json({ message: "Phone number already exists" });
       }
       updateData.phone = phone;
     }
 
-    // Handle profile photo update
     if (req.file) {
       if (user.photo) {
         const oldPhotoPath = path.join("public", user.photo);
@@ -168,44 +158,51 @@ export const updateProfilePhoto = async (req, res) => {
           fs.unlinkSync(oldPhotoPath);
         }
       }
-      updateData.photo = req.file.path
-        .replace(/\\/g, "/")
-        .replace("public/", "");
+      updateData.photo = req.file.path.replace(/\\/g, "/").replace("public/", "");
     }
 
-    // Handle password update
     if (currentPassword && newPassword) {
       const isMatch = await bcrypt.compare(currentPassword, user.password);
       if (!isMatch) {
-        return res
-          .status(400)
-          .json({ message: "Current password is incorrect" });
+        return res.status(400).json({ message: "Current password is incorrect" });
       }
-
       const salt = await bcrypt.genSalt(10);
       updateData.password = await bcrypt.hash(newPassword, salt);
     } else if (currentPassword || newPassword) {
       return res.status(400).json({
-        message:
-          "Both current and new passwords are required to update password",
+        message: "Both current and new passwords are required to update password",
       });
     }
 
-    // Update user
     const updatedUser = await User.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
     });
+
+    // ✅ Clear user cache
+    cache.del(`user:${id}`);
 
     res.json({
       message: "Profile updated successfully",
       user: updatedUser,
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+    res.status(500).json({ message: "Server error", error: error.message });
   }
+};
+
+export const getMyProfile = async (req, res) => {
+  const userId = req.user._id.toString();
+
+  // ✅ Try to get cached user
+  const cached = cache.get(`user:${userId}`);
+  if (cached) return res.status(200).json({ user: cached });
+
+  // Fetch and cache user
+  const user = await User.findById(userId).select("-password");
+  cache.set(`user:${userId}`, user);
+
+  res.status(200).json({ user });
 };
 
 

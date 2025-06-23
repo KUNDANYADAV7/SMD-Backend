@@ -4,6 +4,30 @@ import fs from "fs";
 import path from "path";
 import { Service } from "../models/service.model.js";
 import { io } from "../index.js";  
+import { cache } from "../middleware/cache.js";
+import { fileURLToPath } from "url";
+
+
+
+
+const __filename = fileURLToPath(import.meta.url);  // ✅ Define for ES module
+const __dirname = path.dirname(__filename);         // ✅ Now __dirname is available
+
+const cleanPath = (filePath) =>
+  filePath?.replace(/\\/g, "/").replace("public/", "") || "";
+
+const removeOldFile = (filePath) => {
+  try {
+    const cleanedPath = cleanPath(filePath);
+    const fullPath = path.join(__dirname, "../public", cleanedPath);
+    if (cleanedPath && fs.existsSync(fullPath)) {
+      fs.unlinkSync(fullPath);
+    }
+  } catch (error) {
+    console.error("❌ Failed to remove file:", error.message);
+  }
+};
+
 
 export const createService = async (req, res) => {
   try {
@@ -12,38 +36,60 @@ export const createService = async (req, res) => {
     const iconImage = req.files?.iconImage?.[0];
 
     if (!title || !description || !serviceImage) {
-      return res.status(400).json({
-        message: "Title, description, and service image are required",
-      });
+      return res.status(400).json({ message: "Title, description, and service image are required" });
     }
 
-    // Generate unique slug
-    let slug = slugify(title, { lower: true, strict: true });
-    let count = 1;
-    while (await Service.findOne({ slug })) {
-      slug = slugify(`${title}-${count}`, { lower: true, strict: true });
-      count++;
-    }
-
-    const iconImagePath = iconImage?.path.replace(/\\/g, "/").replace("public/", "") || null;
-    const serviceImagePath = serviceImage.path.replace(/\\/g, "/").replace("public/", "");
     const createdBy = req.user?._id;
+    const iconImagePath = cleanPath(iconImage?.path);
+    const serviceImagePath = cleanPath(serviceImage.path);
 
-    const newService = await Service.create({
-      title,
-      slug,
-      description,
-      iconName: iconName || null,
-      iconImage: iconImagePath,
-      serviceImage: serviceImagePath,
-      createdBy,
+    const steps = [];
+    for (let i = 1; i <= 4; i++) {
+      const stepTitle = req.body[`step${i}Title`] || "";
+      const stepDescription = req.body[`step${i}Description`] || "";
+      const stepFile = req.files?.[`step${i}Image`]?.[0];
+      const stepImage = cleanPath(stepFile?.path);
+      if (stepTitle || stepDescription || stepImage) {
+        steps.push({ stepTitle, stepDescription, stepImage });
+      }
+    }
+
+    res.status(202).json({
+      message: "Service is being created",
+      preview: { title, description, iconImagePath, serviceImagePath, stepsLength: steps.length },
     });
 
-    // Emit event for new service creation
-    io.emit("service:created", newService);
+    (async () => {
+      try {
+        const baseSlug = slugify(title, { lower: true, strict: true });
+        const slugRegex = new RegExp(`^${baseSlug}(-\\d+)?$`);
+        const existingSlugs = await Service.find({ slug: slugRegex }).select("slug");
 
-    res.status(201).json({ message: "Service created", service: newService });
+        let slug = baseSlug;
+        if (existingSlugs.length > 0) {
+          const counts = existingSlugs.map((s) => parseInt(s.slug.split("-").pop()) || 0).filter((n) => !isNaN(n));
+          slug = `${baseSlug}-${Math.max(...counts, 0) + 1}`;
+        }
+
+        const newService = await Service.create({
+          title,
+          slug,
+          description,
+          iconName: iconName || null,
+          iconImage: iconImagePath,
+          serviceImage: serviceImagePath,
+          steps,
+          createdBy,
+        });
+
+        cache.del("all-services"); // ✅ clear cache after creation
+        io.emit("service:created", newService);
+      } catch (e) {
+        console.error("Async createService error:", e.message);
+      }
+    })();
   } catch (error) {
+    console.error("Immediate createService error:", error);
     res.status(500).json({ error: "Internal Server Error", details: error.message });
   }
 };
@@ -62,37 +108,61 @@ export const updateService = async (req, res) => {
 
     const updateData = {};
 
-    if (title) {
+    if (title && title !== service.title) {
       updateData.title = title;
-      updateData.slug = slugify(title, { lower: true, strict: true });
+      const baseSlug = slugify(title, { lower: true, strict: true });
+      const slugRegex = new RegExp(`^${baseSlug}(-\\d+)?$`);
+      const existingSlugs = await Service.find({ slug: slugRegex, _id: { $ne: id } }).select("slug");
+
+      let slug = baseSlug;
+      if (existingSlugs.length > 0) {
+        const counts = existingSlugs.map((s) => parseInt(s.slug.split("-").pop()) || 0).filter((n) => !isNaN(n));
+        slug = `${baseSlug}-${Math.max(...counts, 0) + 1}`;
+      }
+
+      updateData.slug = slug;
     }
 
     if (description !== undefined) updateData.description = description;
     if (iconName !== undefined) updateData.iconName = iconName;
 
     if (req.files?.iconImage?.[0]) {
-      if (service.iconImage) {
-        const oldIconPath = path.join("public", service.iconImage);
-        if (fs.existsSync(oldIconPath)) fs.unlinkSync(oldIconPath);
-      }
-      updateData.iconImage = req.files.iconImage[0].path.replace(/\\/g, "/").replace("public/", "");
+      removeOldFile(service.iconImage);
+      updateData.iconImage = cleanPath(req.files.iconImage[0].path);
     }
 
     if (req.files?.serviceImage?.[0]) {
-      if (service.serviceImage) {
-        const oldServPath = path.join("public", service.serviceImage);
-        if (fs.existsSync(oldServPath)) fs.unlinkSync(oldServPath);
-      }
-      updateData.serviceImage = req.files.serviceImage[0].path.replace(/\\/g, "/").replace("public/", "");
+      removeOldFile(service.serviceImage);
+      updateData.serviceImage = cleanPath(req.files.serviceImage[0].path);
     }
 
-    const updated = await Service.findByIdAndUpdate(id, updateData, { new: true });
+    const updatedSteps = [];
+    for (let i = 1; i <= 4; i++) {
+      const stepTitle = req.body[`step${i}Title`] || "";
+      const stepDescription = req.body[`step${i}Description`] || "";
+      const newStepFile = req.files?.[`step${i}Image`]?.[0];
 
-    // Emit event for service update
-    io.emit("service:updated", updated);
+      let stepImage = service.steps?.[i - 1]?.stepImage || "";
+      if (newStepFile) {
+        if (stepImage) removeOldFile(stepImage);
+        stepImage = cleanPath(newStepFile.path);
+      }
 
-    res.status(200).json({ message: "Service updated", service: updated });
+      if (stepTitle || stepDescription || stepImage) {
+        updatedSteps.push({ stepTitle, stepDescription, stepImage });
+      }
+    }
+
+    updateData.steps = updatedSteps;
+
+    const updatedService = await Service.findByIdAndUpdate(id, updateData, { new: true });
+
+    cache.del("all-services"); // ✅ clear cache after update
+    io.emit("service:updated", updatedService);
+
+    res.status(200).json({ message: "Service updated", service: updatedService });
   } catch (error) {
+    console.error("Update service error:", error);
     res.status(500).json({ message: "Internal server error", details: error.message });
   }
 };
@@ -103,41 +173,63 @@ export const deleteService = async (req, res) => {
     const service = await Service.findById(id);
     if (!service) return res.status(404).json({ message: "Service not found" });
 
-    if (service.iconImage) {
-      const iconPath = path.join("public", service.iconImage);
-      if (fs.existsSync(iconPath)) fs.unlinkSync(iconPath);
-    }
-
-    if (service.serviceImage) {
-      const servPath = path.join("public", service.serviceImage);
-      if (fs.existsSync(servPath)) fs.unlinkSync(servPath);
+    removeOldFile(service.iconImage);
+    removeOldFile(service.serviceImage);
+    if (Array.isArray(service.steps)) {
+      for (const step of service.steps) {
+        if (step.stepImage) removeOldFile(step.stepImage);
+      }
     }
 
     await service.deleteOne();
 
-    // Emit event for service deletion
+    cache.del("all-services"); // ✅ clear cache after delete
     io.emit("service:deleted", id);
-
     res.status(200).json({ message: "Service deleted" });
   } catch (error) {
     res.status(500).json({ message: "Error deleting service", details: error.message });
   }
 };
 
+
+
 export const getAllServices = async (req, res) => {
   try {
+    const cacheKey = "all-services";
+
+    // 1. Check cache
+    const cachedData = cache.get(cacheKey);
+    if (cachedData) {
+      return res.status(200).json(cachedData);
+    }
+
+    // 2. If not cached, fetch from DB
     const services = await Service.find().sort({ createdAt: -1 });
+
+    // 3. Store result in cache
+    cache.set(cacheKey, services);
+
     res.status(200).json(services);
   } catch (error) {
     res.status(500).json({ message: "Server error", details: error.message });
   }
 };
 
+
+
 export const getServiceById = async (req, res) => {
   const { id } = req.params;
+  const cacheKey = `service-by-id:${id}`;
   try {
+    // Check cache
+    const cached = cache.get(cacheKey);
+    if (cached) return res.status(200).json(cached);
+
+    // Fetch from DB if not in cache
     const service = await Service.findById(id);
     if (!service) return res.status(404).json({ message: "Not found" });
+
+    cache.set(cacheKey, service); // Store in cache
     res.status(200).json(service);
   } catch (error) {
     res.status(500).json({ message: "Server error", details: error.message });
@@ -146,11 +238,20 @@ export const getServiceById = async (req, res) => {
 
 export const getServiceBySlug = async (req, res) => {
   const { slug } = req.params;
+  const cacheKey = `service-by-slug:${slug}`;
   try {
+    // Check cache
+    const cached = cache.get(cacheKey);
+    if (cached) return res.status(200).json(cached);
+
+    // Fetch from DB if not in cache
     const service = await Service.findOne({ slug });
     if (!service) return res.status(404).json({ message: "Not found" });
+
+    cache.set(cacheKey, service); // Store in cache
     res.status(200).json(service);
   } catch (error) {
     res.status(500).json({ message: "Server error", details: error.message });
   }
 };
+
