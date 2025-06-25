@@ -38,7 +38,7 @@ export const getAllTrustedClients = async (req, res) => {
     const cached = cache.get("allTrustedClients");
     if (cached) return res.status(200).json(cached);
 
-    const clients = await TrustedClient.find().sort({ createdAt: -1 });
+    const clients = await TrustedClient.find().sort({ createdAt: -1 }).lean();
     cache.set("allTrustedClients", clients);
 
     res.status(200).json(clients);

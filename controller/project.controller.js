@@ -178,7 +178,8 @@ export const getAllProjects = async (req, res) => {
     const cached = cache.get("allProjects");
     if (cached) return res.status(200).json(cached);
 
-    const projects = await Project.find();
+    // const projects = await Project.find();
+      const projects = await Project.find().lean();
     cache.set("allProjects", projects);
     res.status(200).json(projects);
   } catch (error) {

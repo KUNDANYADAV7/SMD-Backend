@@ -204,7 +204,7 @@ export const getAllServices = async (req, res) => {
     }
 
     // 2. If not cached, fetch from DB
-    const services = await Service.find().sort({ createdAt: -1 });
+    const services = await Service.find().sort({ createdAt: -1 }).lean();
 
     // 3. Store result in cache
     cache.set(cacheKey, services);
