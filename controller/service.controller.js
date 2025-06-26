@@ -156,7 +156,7 @@ export const updateService = async (req, res) => {
     updateData.steps = updatedSteps;
 
     const updatedService = await Service.findByIdAndUpdate(id, updateData, { new: true });
-
+    cache.del(`service-by-id:${id}`);
     cache.del("all-services"); // ✅ clear cache after update
     io.emit("service:updated", updatedService);
 
